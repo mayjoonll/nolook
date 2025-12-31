@@ -18,10 +18,10 @@ from scene_transition import TransitionManager
 class NoLookEngine:
     """
     - 웹캠 점유(OpenCV)
-    - 처음 warmup_seconds 동안은 "녹화만" 하고 추적(디텍터) OFF
-    - 그 다음부터 디텍터 ON
-    - REAL 상태에서는 최근 rolling_seconds 만큼 롤링 저장
-    - 딴짓 감지되면 롤링 버퍼(가장 오래된 seg부터) 재생 → 훨씬 자연스러운 FAKE
+    - warmup_seconds 동안은 "녹화만" 하고 추적 OFF
+    - 이후 디텍터 ON
+    - REAL에서는 rolling_seconds 만큼 롤링 저장
+    - FAKE로 전환되면 롤링 버퍼를 재생(딜레이 영상)
     """
 
     def __init__(
