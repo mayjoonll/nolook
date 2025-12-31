@@ -2,9 +2,10 @@
 # STT (Speech-to-Text)
 faster-whisper>=1.0.0
 SpeechRecognition>=3.10.0
+PyAudio
+pyaudio
 
 # Audio Processing
-audioop-lts  # Python 3.13+ 호환
 numpy
 
 # GPU Support (CUDA)
