@@ -1,5 +1,4 @@
 import os
-
 from dotenv import load_dotenv
 
 # .env 파일 위치를 명시적으로 로드하여 꼬임 방지
@@ -16,7 +15,6 @@ class MacroBot:
         from exaone_loader import ExaoneLoader
         self.loader = ExaoneLoader()
         self.model = self.loader._model  # 호환성을 위해 유지하지만, 실제론 loader 사용
-
         
         # 개인화 설정 로드 (stt_core의 load_config 활용)
         from stt_core import load_config

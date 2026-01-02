@@ -14,8 +14,8 @@ class ExaoneLoader:
         return cls._instance
 
     def _load_model(self):
-        print("📥 Loding LGAI-EXAONE/EXAONE-4.0-1.2B-Instruct model...")
-        model_id = "LGAI-EXAONE/EXAONE-4.0-1.2B"  
+        print("📥 Loding LGAI-EXAONE/EXAONE-4.0-1.2B model...")
+        model_id = "LGAI-EXAONE/EXAONE-4.0-1.2B"
         
         try:
             self._tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
