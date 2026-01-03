@@ -58,6 +58,14 @@ export async function setTransitionEffect(effectName) {
     });
 }
 
+export async function controlAssistant(value) {
+    return fetchJson(`${API_BASE_URL}/control/assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+    });
+}
+
 /**
  * ---- AI reply / macro ----
  * useMock=true면 프론트에서 더미로 동작.

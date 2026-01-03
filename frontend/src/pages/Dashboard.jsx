@@ -1,13 +1,13 @@
 // web/src/pages/Dashboard.jsx
 import { useEffect, useState, useCallback, useRef } from 'react';
 import VideoPreview from '../components/VideoPreview';
-import SttPanel from '../components/SttPanel';
+
 import TransitionSelector from '../components/TransitionSelector';
 import Toast, { useToast } from '../components/Toast';
 import '../styles/dashboard.css';
 
 import { wsClient } from '../lib/wsClient';
-import { setPauseFake, setForceReal, resetLock, fetchEngineState } from '../lib/api';
+import { setPauseFake, setForceReal, resetLock, fetchEngineState, controlAssistant } from '../lib/api';
 
 import logoImg from '../assets/logo.png';
 
@@ -20,6 +20,8 @@ export default function Dashboard() {
     const [pauseFake, setPauseFakeState] = useState(false);
     const [forceReal, setForceRealState] = useState(false);
     const [reasons, setReasons] = useState([]);
+    const [sttData, setSttData] = useState({ history: [], current: '' });
+    const [assistantEnabled, setAssistantEnabled] = useState(false);
 
     // ✅ session/warmup
     const [sessionActive, setSessionActive] = useState(false);
@@ -28,6 +30,14 @@ export default function Dashboard() {
     const [warmupRemainingSec, setWarmupRemainingSec] = useState(0);
 
     const prevWarmingUpRef = useRef(false);
+    const scrollRef = useRef(null);
+
+    // Auto-scroll to bottom when sttData changes
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [sttData]);
 
     const mmss = (sec) => {
         const s = Math.max(0, Number(sec || 0));
@@ -45,6 +55,8 @@ export default function Dashboard() {
         setPauseFakeState(!!s.pauseFake);
         setForceRealState(!!s.forceReal);
         setReasons(s.reasons ?? []);
+        if (s.stt) setSttData(s.stt);
+        if (s.assistantEnabled !== undefined) setAssistantEnabled(!!s.assistantEnabled);
 
         setSessionActive(!!s.sessionActive);
         setWarmingUp(!!s.warmingUp);
@@ -87,6 +99,12 @@ export default function Dashboard() {
         const res = await resetLock();
         if (res.ok) addToast('락 초기화 완료', 'success');
     }, [addToast]);
+
+    const toggleAssistant = useCallback(async () => {
+        const next = !assistantEnabled;
+        const res = await controlAssistant(next);
+        if (res.ok) addToast(`Auto Macro: ${next ? 'ON' : 'OFF'}`, 'success');
+    }, [assistantEnabled, addToast]);
 
     const progress = warmupTotalSec > 0
         ? (warmupTotalSec - warmupRemainingSec) / warmupTotalSec
@@ -138,6 +156,14 @@ export default function Dashboard() {
                         <button className="btn btn-large" onClick={handleResetLock}>
                             락 초기화
                         </button>
+
+                        <button
+                            className={`btn btn-large ${assistantEnabled ? 'btn-danger' : 'btn-success'}`}
+                            style={{ marginLeft: 10 }}
+                            onClick={toggleAssistant}
+                        >
+                            {assistantEnabled ? 'Auto Macro OFF' : 'Auto Macro ON'}
+                        </button>
                     </div>
 
                     <div className="mode-display">
@@ -159,9 +185,57 @@ export default function Dashboard() {
                     <TransitionSelector addToast={addToast} />
                 </div>
 
-                <div className="stt-section">
-                    <SttPanel addToast={addToast} />
+                {/* ✅ STT Display Section */}
+                <div className="stt-section" style={{
+                    marginTop: '2rem',
+                    padding: '1.5rem',
+                    backgroundColor: 'rgba(0,0,0,0.3)',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255,255,255,0.1)'
+                }}>
+                    <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.2rem', color: '#fff' }}>
+                        🎙️ Live Transcript (Auto Macro)
+                    </h3>
+                    <div
+                        className="stt-history"
+                        ref={scrollRef}
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '0.5rem',
+                            marginBottom: '1rem',
+                            opacity: 0.9,
+                            maxHeight: '300px',
+                            overflowY: 'auto',
+                            paddingRight: '8px'
+                        }}
+                    >
+                        {sttData.history.length === 0 && !sttData.current && (
+                            <div style={{ color: '#666', fontStyle: 'italic' }}>
+                                대기 중... (말씀하시면 여기에 표시됩니다)
+                            </div>
+                        )}
+                        {sttData.history.map((text, i) => (
+                            <div key={i} className="stt-line" style={{ color: '#e0e0e0', lineHeight: '1.4' }}>
+                                {text}
+                            </div>
+                        ))}
+                    </div>
+                    {sttData.current && (
+                        <div className="stt-current" style={{
+                            color: '#4caf50',
+                            fontWeight: '600',
+                            fontSize: '1.1rem',
+                            padding: '0.5rem',
+                            background: 'rgba(76, 175, 80, 0.1)',
+                            borderRadius: '6px'
+                        }}>
+                            ▶ {sttData.current}
+                        </div>
+                    )}
                 </div>
+
+
             </div>
 
             <Toast toasts={toasts} onRemove={removeToast} />

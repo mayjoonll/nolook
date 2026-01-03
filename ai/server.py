@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from engine import NoLookEngine
+from auto_macro_service import assistant_service
 
 
 def resource_path(relative_path: str) -> str:
@@ -80,6 +81,15 @@ def reset_lock():
     return {"ok": True, "lockedFake": False}
 
 
+@api_router.post("/control/assistant")
+def control_assistant(payload: BoolPayload):
+    if payload.value:
+        assistant_service.start()
+    else:
+        assistant_service.stop()
+    return {"ok": True, "assistantEnabled": payload.value}
+
+
 @api_router.get("/state")
 def get_state():
     # ✅ "처음 접속" 트리거: 여기서 warmup 세션 시작
@@ -101,7 +111,13 @@ async def ws_state(websocket: WebSocket):
     clients.add(websocket)
     try:
         engine.start_session_if_needed()
-        await websocket.send_json(engine.get_state())
+        init_state = engine.get_state()
+        try:
+            init_state["stt"] = assistant_service.get_transcript_state()
+            init_state["assistantEnabled"] = assistant_service._running
+        except Exception as e:
+            print(f"⚠️ Init STT Error: {e}")
+        await websocket.send_json(init_state)
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
@@ -114,6 +130,14 @@ async def broadcast_state_loop():
         if clients:
             engine.start_session_if_needed()
         state = engine.get_state()
+        
+        # ✅ STT 상태 병합
+        try:
+            state["stt"] = assistant_service.get_transcript_state()
+            state["assistantEnabled"] = assistant_service._running
+        except Exception as e:
+            print(f"⚠️ STT State Error: {e}")
+
         dead = []
         for ws in list(clients):
             try:
@@ -134,6 +158,7 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     engine.stop()
+    assistant_service.stop()
 
 
 static_dir = resource_path("static")
