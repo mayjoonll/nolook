@@ -58,6 +58,14 @@ export async function setTransitionEffect(effectName) {
     });
 }
 
+export async function controlAssistant(value) {
+    return fetchJson(`${API_BASE_URL}/control/assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+    });
+}
+
 /**
  * ---- AI reply / macro ----
  * useMock=true면 프론트에서 더미로 동작.
@@ -102,6 +110,19 @@ export async function requestMacroType(text, useMock = true) {
     return fetchJson(`${API_BASE_URL}/macro/type`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: v }),
+        body: JSON.stringify({ value: v }),
+    });
+}
+
+// === Config management ===
+export async function getConfig() {
+    return fetchJson(`${API_BASE_URL}/config`);
+}
+
+export async function saveConfig(configData) {
+    return fetchJson(`${API_BASE_URL}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(configData),
     });
 }

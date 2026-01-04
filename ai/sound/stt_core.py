@@ -6,6 +6,7 @@ import sys
 import queue
 import time
 import re
+from datetime import datetime
 
 # Windows 콘솔 인코딩 설정 (이모지 출력용)
 sys.stdout.reconfigure(encoding='utf-8')
@@ -55,6 +56,8 @@ class GhostEars:
         
         # [Queue] 오디오 데이터 대기열 (비동기 처리용)
         self.audio_queue = queue.Queue()
+        self.is_listening = False
+        self.stopper = None
         
         # 현재 파일 위치(ai/sound) 기준으로 경로 설정 (어디서 실행하든 여기 저장됨)
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -75,6 +78,10 @@ class GhostEars:
 
     def start_listening(self):
         """백그라운드 리스닝 시작"""
+        if self.is_listening:
+            print("⚠️ [GhostEars] 이미 리스닝 중입니다.")
+            return True
+            
         try:
             self.source = sr.Microphone(device_index=self.device_index, sample_rate=self.sample_rate)
             print(f"👂 [Background Listening] 백그라운드 청취 시작... (Rate: {self.sample_rate}Hz)")
@@ -85,6 +92,7 @@ class GhostEars:
                 self._audio_callback, 
                 phrase_time_limit=5 # 응답 속도를 위해 짧게 끊음
             )
+            self.is_listening = True
             return True
         except Exception as e:
             print(f"❌ 마이크 초기화 실패: {e}")
@@ -94,15 +102,14 @@ class GhostEars:
         """Queue에 쌓인 오디오를 하나씩 꺼내서 처리 (제너레이터)"""
         while True:
             try:
-                # 0.5초마다 큐 확인
-                audio_data = self.audio_queue.get(timeout=0.5)
+                # 0.5초마다 큐 확인 -> 0.01초로 단축 (프레임 저하 방지)
+                audio_data = self.audio_queue.get(timeout=0.01)
             except queue.Empty:
                 yield None
                 continue
             
             # 오디오 처리 (기존 로직)
             try:
-                print("⚡ [Processing] 오디오 변환 중...")
                 with open(self.temp_filename, "wb") as f:
                     f.write(audio_data.get_wav_data())
                 
@@ -131,20 +138,29 @@ class GhostEars:
                 yield final_text
                 
             except Exception as e:
-                print(f"⚠️ 변환 중 에러: {e}")
+                # 특정 에러(오디오 장치 끊김 등)에 대한 자세한 로그 추가
+                print(f"⚠️ [STT Core] 변환 중 에러 발생: {e}")
+                # 에러 발생 시 잠시 대기하여 무한 루프 과부하 방지
+                time.sleep(1)
                 yield None
 
     def save_to_log(self, text):
         """인식된 텍스트를 파일 및 메모리에 저장 (GPT가 읽어갈 용도)"""
-        timestamp = time.strftime("[%H:%M:%S]")
-        entry = f"{timestamp} {text}"
-        
-        # 파일 저장
-        with open(self.transcript_file, "a", encoding="utf-8") as f:
-            f.write(f"{entry}\n")
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            entry = f"[{timestamp}] {text}"
             
-        # 메모리 저장
-        self.full_history.append(entry)
+            # 파일 저장
+            with open(self.transcript_file, "a", encoding="utf-8") as f:
+                f.write(f"{entry}\n")
+                f.flush()
+                # os.fsync(f.fileno()) # 성능을 위해 선택적 사용
+                
+            # 메모리 저장
+            self.full_history.append(entry)
+            print(f"💾 [Log Saved] {entry}")
+        except Exception as e:
+            print(f"❌ [Log Error] 저장 실패: {e}")
 
     def get_full_transcript(self):
         """지금까지의 전체 대화 내용을 하나로 합쳐서 반환"""
@@ -182,28 +198,29 @@ class GhostEars:
         if not text:
             return None
             
-        # 검색 품질을 위해 공백 및 특수문자 제거 버전 준비
-        clean_text = re.sub(r'[^a-zA-Z0-9가-힣]', '', text)
-        
-        # 1. 키워드 체크
-        for keyword in self.trigger_keywords:
-            clean_keyword = re.sub(r'[^a-zA-Z0-9가-힣]', '', keyword)
-            if clean_keyword in clean_text:
-                return ("KEYWORD", keyword)
-        
-        # 2. 질문/지시 패턴 체크 (정규식 지원)
+        # 1. 원본 텍스트 기반 정규식/패턴 체크 (문장 부호 포함)
         for pattern in self.question_patterns:
-            # 패턴 자체가 포함되어 있는지 혹은 정규식으로 매칭되는지 확인
-            clean_pattern = re.sub(r'[^a-zA-Z0-9가-힣]', '', pattern)
-            if clean_pattern in clean_text:
+            # 특수 기호(?, !) 등이 포함된 패턴을 위해 원본 대조
+            if pattern in text:
                 return ("QUESTION", pattern)
             
             # 실제 정규식 매칭 시도
             try:
-                if re.search(pattern, text):
+                if re.search(pattern, text, re.IGNORECASE):
                     return ("QUESTION", pattern)
             except:
                 continue
+
+        # 2. 검색 품질을 위해 공백 및 특수문자 제거 버전 준비 (키워드 매칭용)
+        clean_text = re.sub(r'[^a-zA-Z0-9가-힣]', '', text)
+        
+        # 3. 키워드 체크
+        for keyword in self.trigger_keywords:
+            clean_keyword = re.sub(r'[^a-zA-Z0-9가-힣]', '', keyword)
+            if not clean_keyword: continue # 빈 키워드 방지
+            
+            if clean_keyword in clean_text:
+                return ("KEYWORD", keyword)
         
         return None
 

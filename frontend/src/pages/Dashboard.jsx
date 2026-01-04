@@ -1,13 +1,13 @@
-// web/src/pages/Dashboard.jsx
 import { useEffect, useState, useCallback, useRef } from 'react';
 import VideoPreview from '../components/VideoPreview';
-import SttPanel from '../components/SttPanel';
+import ConfigModal from '../components/ConfigModal';
+
 import TransitionSelector from '../components/TransitionSelector';
 import Toast, { useToast } from '../components/Toast';
 import '../styles/dashboard.css';
 
 import { wsClient } from '../lib/wsClient';
-import { setPauseFake, setForceReal, resetLock, fetchEngineState } from '../lib/api';
+import { setPauseFake, setForceReal, resetLock, fetchEngineState, controlAssistant, requestMacroType } from '../lib/api';
 
 import logoImg from '../assets/logo.png';
 
@@ -20,6 +20,8 @@ export default function Dashboard() {
     const [pauseFake, setPauseFakeState] = useState(false);
     const [forceReal, setForceRealState] = useState(false);
     const [reasons, setReasons] = useState([]);
+    const [sttData, setSttData] = useState({ history: [], current: '' });
+    const [assistantEnabled, setAssistantEnabled] = useState(false);
 
     // ✅ session/warmup
     const [sessionActive, setSessionActive] = useState(false);
@@ -28,6 +30,47 @@ export default function Dashboard() {
     const [warmupRemainingSec, setWarmupRemainingSec] = useState(0);
 
     const prevWarmingUpRef = useRef(false);
+    const scrollRef = useRef(null);
+    const [showConfigModal, setShowConfigModal] = useState(false);
+
+    // ✅ Enter Key to send AI suggestion to Zoom
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            // 다른 입력창(input, textarea 등)에 있을 때는 무시
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+                return;
+            }
+
+            // Enter 키 감지 (Shift/Alt 등 조합 제외, 추천 답변이 있을 때만)
+            if (e.key === 'Enter' && sttData.suggestion && !e.shiftKey && !e.ctrlKey) {
+                const sendMacro = async () => {
+                    try {
+                        console.log('🚀 Sending macro to zoom:', sttData.suggestion);
+                        await requestMacroType(sttData.suggestion, false);
+                        addToast('🚀 줌으로 답변을 전송했습니다!', 'info');
+                    } catch (err) {
+                        console.error('Failed to send macro:', err);
+                        addToast('❌ 전송 실패: ' + err.message, 'error');
+                    }
+                };
+                sendMacro();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [sttData.suggestion, addToast]);
+
+    // ✅ Smart Auto-scroll: Only scroll if the user is already near the bottom
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+
+        const isAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 100; // 100px threshold
+        if (isAtBottom) {
+            el.scrollTop = el.scrollHeight;
+        }
+    }, [sttData]);
 
     const mmss = (sec) => {
         const s = Math.max(0, Number(sec || 0));
@@ -45,6 +88,8 @@ export default function Dashboard() {
         setPauseFakeState(!!s.pauseFake);
         setForceRealState(!!s.forceReal);
         setReasons(s.reasons ?? []);
+        if (s.stt) setSttData(s.stt);
+        if (s.assistantEnabled !== undefined) setAssistantEnabled(!!s.assistantEnabled);
 
         setSessionActive(!!s.sessionActive);
         setWarmingUp(!!s.warmingUp);
@@ -87,6 +132,20 @@ export default function Dashboard() {
         const res = await resetLock();
         if (res.ok) addToast('락 초기화 완료', 'success');
     }, [addToast]);
+
+    const toggleAssistant = async () => {
+        try {
+            const newValue = !assistantEnabled;
+            await controlAssistant(newValue);
+            setAssistantEnabled(newValue);
+        } catch (err) {
+            console.error('Failed to toggle assistant:', err);
+        }
+    };
+
+    const handleConfigSave = () => {
+        addToast('⚙️ 설정이 저장되었습니다!', 'success');
+    };
 
     const progress = warmupTotalSec > 0
         ? (warmupTotalSec - warmupRemainingSec) / warmupTotalSec
@@ -138,6 +197,22 @@ export default function Dashboard() {
                         <button className="btn btn-large" onClick={handleResetLock}>
                             락 초기화
                         </button>
+
+                        <button
+                            className={`btn btn-large ${assistantEnabled ? 'btn-danger' : 'btn-success'}`}
+                            style={{ marginLeft: 10 }}
+                            onClick={toggleAssistant}
+                        >
+                            {assistantEnabled ? 'Auto Macro OFF' : 'Auto Macro ON'}
+                        </button>
+                        <button
+                            className="btn btn-icon"
+                            style={{ marginLeft: 8 }}
+                            onClick={() => setShowConfigModal(true)}
+                            title="설정"
+                        >
+                            ⚙️
+                        </button>
                     </div>
 
                     <div className="mode-display">
@@ -159,12 +234,53 @@ export default function Dashboard() {
                     <TransitionSelector addToast={addToast} />
                 </div>
 
+                {/* ✅ STT Display Section */}
                 <div className="stt-section">
-                    <SttPanel addToast={addToast} />
+                    <h3 className="stt-title">
+                        🎙️ Live Transcript (Auto Macro)
+                    </h3>
+                    <div
+                        className="stt-history"
+                        ref={scrollRef}
+                    >
+                        {sttData.history.length === 0 && !sttData.current && (
+                            <div className="stt-empty">
+                                대기 중... (말씀하시면 여기에 표시됩니다)
+                            </div>
+                        )}
+                        {sttData.history.map((text, i) => (
+                            <div key={i} className="stt-line">
+                                {text}
+                            </div>
+                        ))}
+                    </div>
+                    {sttData.current && (
+                        <div className="stt-current">
+                            ▶ {sttData.current}
+                        </div>
+                    )}
+                    {sttData.suggestion && (
+                        <div className="stt-suggestion">
+                            <span className="suggestion-label">
+                                🤖 AI 추천 답변
+                                <span className="suggestion-hint">Enter를 눌러 전송</span>
+                            </span>
+                            <div className="suggestion-content">{sttData.suggestion}</div>
+                        </div>
+                    )}
                 </div>
+
+
             </div>
 
             <Toast toasts={toasts} onRemove={removeToast} />
+
+            {/* 설정 모달 */}
+            <ConfigModal
+                isOpen={showConfigModal}
+                onClose={() => setShowConfigModal(false)}
+                onSave={handleConfigSave}
+            />
         </div>
     );
 }
