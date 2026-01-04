@@ -133,15 +133,21 @@ export default function Dashboard() {
         if (res.ok) addToast('락 초기화 완료', 'success');
     }, [addToast]);
 
-    const toggleAssistant = async () => {
+    const toggleAssistant = useCallback(async () => {
         try {
             const newValue = !assistantEnabled;
-            await controlAssistant(newValue);
-            setAssistantEnabled(newValue);
+            const res = await controlAssistant(newValue);
+            if (res.ok) {
+                setAssistantEnabled(newValue);
+                addToast(`Auto Macro: ${newValue ? 'ON' : 'OFF'}`, 'success');
+            } else {
+                addToast('❌ Auto Macro 토글 실패', 'error');
+            }
         } catch (err) {
             console.error('Failed to toggle assistant:', err);
+            addToast(`❌ 오류: ${err.message}`, 'error');
         }
-    };
+    }, [assistantEnabled, addToast]);
 
     const handleConfigSave = () => {
         addToast('⚙️ 설정이 저장되었습니다!', 'success');
@@ -248,11 +254,24 @@ export default function Dashboard() {
                                 대기 중... (말씀하시면 여기에 표시됩니다)
                             </div>
                         )}
-                        {sttData.history.map((text, i) => (
-                            <div key={i} className="stt-line">
-                                {text}
-                            </div>
-                        ))}
+                        {sttData.history.map((item, i) => {
+                            // ✅ 타임스탬프가 있는 객체 또는 없는 문자열 모두 지원
+                            const text = typeof item === 'string' ? item : item.text;
+                            const timestamp = typeof item === 'object' && item.timestamp
+                                ? new Date(item.timestamp * 1000).toLocaleTimeString('ko-KR', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit'
+                                })
+                                : null;
+
+                            return (
+                                <div key={i} className="stt-line">
+                                    {timestamp && <span className="stt-timestamp">{timestamp}</span>}
+                                    <span className="stt-text">{text}</span>
+                                </div>
+                            );
+                        })}
                     </div>
                     {sttData.current && (
                         <div className="stt-current">
