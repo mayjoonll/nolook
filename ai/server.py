@@ -2,6 +2,7 @@
 import asyncio
 import os
 import sys
+import json
 from typing import Set
 
 import uvicorn
@@ -9,14 +10,16 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import json
 
 from engine import NoLookEngine
 from auto_macro_service import assistant_service
 
+# ✅ config.json 읽기/저장 경로를 한 군데로 통일 (dev: ai/sound/config.json, 없으면 %APPDATA%/No-Look/config.json)
+from config_loader import load_config as load_cfg, save_config as save_cfg
+
 
 def resource_path(relative_path: str) -> str:
-    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
 
@@ -36,7 +39,6 @@ engine = NoLookEngine(
     fps_limit=30.0,
     warmup_seconds=60,
     rolling_seconds=60,
-
     rolling_segment_seconds=2,
 )
 
@@ -49,6 +51,7 @@ class BoolPayload(BaseModel):
 
 class StringPayload(BaseModel):
     value: str
+
 
 class ConfigPayload(BaseModel):
     """config.json 전체 구조"""
@@ -105,14 +108,14 @@ def macro_type(payload: StringPayload):
     try:
         if assistant_service.automator:
             import threading
+
             threading.Thread(
                 target=assistant_service.automator.send_to_zoom,
                 args=(payload.value,),
-                daemon=True
+                daemon=True,
             ).start()
             return {"ok": True, "message": "전송 요청 완료"}
-        else:
-            return {"ok": False, "message": "Automator가 초기화되지 않았습니다."}
+        return {"ok": False, "message": "Automator가 초기화되지 않았습니다."}
     except Exception as e:
         return {"ok": False, "detail": str(e)}
 
@@ -121,14 +124,7 @@ def macro_type(payload: StringPayload):
 def get_config():
     """현재 config.json 내용을 읽어서 반환"""
     try:
-        # 현재 파일(server.py) 기준으로 상대 경로 사용
-        import os
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        config_path = os.path.join(base_dir, "sound", "config.json")
-        
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
-        return config_data
+        return load_cfg()
     except Exception as e:
         print(f"❌ [Config API] 설정 읽기 실패: {e}")
         return {"ok": False, "detail": str(e)}
@@ -138,19 +134,15 @@ def get_config():
 def save_config(payload: ConfigPayload):
     """설정을 config.json에 저장하고 실시간 반영"""
     try:
-        import os
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        config_path = os.path.join(base_dir, "sound", "config.json")
         config_dict = payload.dict()
-        
-        # config.json 저장
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config_dict, f, ensure_ascii=False, indent=4)
-        
-        # STT 엔진에 실시간 반영
-        if assistant_service._initialized and assistant_service.ears:
+
+        # ✅ config 저장 (dev 경로가 있으면 거기, 없으면 user(AppData) 쪽)
+        save_cfg(config_dict)
+
+        # ✅ STT 엔진에 실시간 반영
+        if getattr(assistant_service, "_initialized", False) and getattr(assistant_service, "ears", None):
             assistant_service.ears.reload_config()
-        
+
         return {"ok": True, "message": "설정이 저장되고 반영되었습니다."}
     except Exception as e:
         print(f"❌ [Config API] 설정 저장 실패: {e}")
@@ -162,7 +154,7 @@ def get_full_engine_state():
     state = engine.get_state()
     try:
         state["stt"] = assistant_service.get_transcript_state()
-        state["assistantEnabled"] = assistant_service._running
+        state["assistantEnabled"] = getattr(assistant_service, "_running", False)
     except Exception as e:
         print(f"⚠️ State Merge Error: {e}")
     return state
@@ -197,7 +189,7 @@ async def broadcast_state_loop():
     while True:
         if clients:
             engine.start_session_if_needed()
-        
+
         state = get_full_engine_state()
 
         dead = []
@@ -206,8 +198,10 @@ async def broadcast_state_loop():
                 await ws.send_json(state)
             except Exception:
                 dead.append(ws)
+
         for ws in dead:
             clients.discard(ws)
+
         await asyncio.sleep(0.05)
 
 
