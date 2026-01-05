@@ -46,16 +46,19 @@ class AutoAssistantService:
 
     def start(self):
         """서비스를 별도 스레드에서 시작"""
-        if self._running:
+        # ✅ 이미 실행 중이고 스레드가 살아있는 경우에만 리턴
+        if self._running and self._thread and self._thread.is_alive():
+            print("⚠️ [AutoAssistant] 이미 실행 중입니다.")
             return
         
         self._running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
         
-        # 워치독 스레드 시작
-        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
-        self._watchdog_thread.start()
+        # 워치독 스레드 시작 (기존에 없거나 죽은 경우에만)
+        if not self._watchdog_thread or not self._watchdog_thread.is_alive():
+            self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+            self._watchdog_thread.start()
         
         print("🚀 [AutoAssistant] AI 비서 서비스 및 워치독 시작")
 
@@ -71,6 +74,8 @@ class AutoAssistantService:
         if self.ears and hasattr(self.ears, 'stopper'):
             try:
                 self.ears.stopper(wait_for_stop=False)
+                # ✅ 리스닝 상태 플래그 리셋 (재시작 가능하도록)
+                self.ears.is_listening = False
             except Exception as e:
                 print(f"⚠️ [AutoAssistant] Stopper error: {e}")
 
@@ -100,12 +105,14 @@ class AutoAssistantService:
 
     def _run_loop(self):
         """실제 작업이 돌아가는 메인 루프 (Thread Safe)"""
+        # 모델 초기화 (첫 실행의 경우)
         if not self._initialize_models():
             self._running = False
             return
 
         print(f"🎤 마이크 인덱스: {self.ears.device_index}")
         
+        # ✅ 리스닝 재시작 (stop 후 start를 호출한 경우에도 작동)
         if not self.ears.start_listening():
             print("❌ [AutoAssistant] 마이크 리스닝 시작 실패")
             self._running = False
@@ -176,7 +183,11 @@ class AutoAssistantService:
             else:
                 if self.sentence_buffer:
                     merged_sentence = " ".join(self.sentence_buffer)
-                    self.history.append(merged_sentence)
+                    # ✅ 타임스탬프와 함께 저장
+                    self.history.append({
+                        "text": merged_sentence,
+                        "timestamp": self.last_received_time
+                    })
                 self.sentence_buffer = [text]
             
             self.last_received_time = current_time
@@ -189,7 +200,7 @@ class AutoAssistantService:
                 return
 
             with self._lock:
-                context_snapshot = list(self.history)
+                context_snapshot = [item["text"] if isinstance(item, dict) else item for item in self.history]
                 self.sentence_buffer = []
             
             threading.Thread(
@@ -207,7 +218,10 @@ class AutoAssistantService:
             
             # ✅ [Fix] 답변 생성이 오래 걸릴 수 있으므로, 텍스트를 즉시 히스토리에 반영하여 사용자가 대기하지 않게 함
             with self._lock:
-                self.history.append(current_processing_text)
+                self.history.append({
+                    "text": current_processing_text,
+                    "timestamp": time.time()
+                })
                 
             print("⏳ [AutoAssistant] 답변 생성 중... (STT는 계속 동작합니다)")
             
